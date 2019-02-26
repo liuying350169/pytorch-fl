@@ -1,13 +1,14 @@
 import torch
 import torch.distributed.deprecated as dist
-from datasource import Mnist, Mnist_noniid, Cifar10, Cifar10_noniid
-from model import CNNMnist, CNNCifar, ResNet18
+from datasource import KWS, KWS_noniid, Mnist, Mnist_noniid, Cifar10, Cifar10_noniid
+from model import CNNKws, CNNMnist, CNNCifar, ResNet18
 import copy
 from torch.multiprocessing import Process
 import argparse
 import time
 import sys
 import os
+
 sys.stdout.flush()
 
 LR = 0.001
@@ -15,10 +16,12 @@ MAX_ROUND = 3000
 ROUND_NUMBER_FOR_SAVE = 50
 ROUND_NUMBER_FOR_REDUCE = 5
 IID = False
-DATA_SET = 'Mnist'
-#DATA_SET = 'Cifar10'
+DATA_SET = 'KWS'
+# DATA_SET = 'Cifar10'
 MODEL = 'CNN'
-#MODEL = 'ResNet18'
+
+
+# MODEL = 'ResNet18'
 
 def get_local_data(size, rank, batchsize):
     if IID == True:
@@ -26,41 +29,53 @@ def get_local_data(size, rank, batchsize):
             train_loader = Mnist(rank, batchsize).get_train_data()
         if DATA_SET == 'Cifar10':
             train_loader = Cifar10(rank, batchsize).get_train_data()
+        if DATA_SET == 'KWS':
+            train_loader = KWS(rank, batchsize).get_train_data()
     else:
         if DATA_SET == 'Mnist':
             train_loader = Mnist_noniid(batchsize, size).get_train_data(rank)
         if DATA_SET == 'Cifar10':
             train_loader = Cifar10_noniid(batchsize, size).get_train_data(rank)
+        if DATA_SET == 'KWS':
+            train_loader = KWS_noniid(batchsize, size).get_train_data(rank)
     return train_loader
+
 
 def get_testset(rank):
     if IID == True:
         if DATA_SET == 'Mnist':
-            test_loader = Mnist(rank).get_test_data()
+            test_loader = Mnist().get_test_data()
         if DATA_SET == 'Cifar10':
-            test_loader = Cifar10(rank).get_test_data()
+            test_loader = Cifar10().get_test_data()
+        if DATA_SET == 'KWS':
+            test_loader = KWS(rank).get_test_data()
     else:
         if DATA_SET == 'Mnist':
             test_loader = Mnist_noniid().get_test_data()
         if DATA_SET == 'Cifar10':
             test_loader = Cifar10_noniid().get_test_data()
+        if DATA_SET == 'KWS':
+            test_loader = KWS_noniid().get_test_data()
     return test_loader
+
 
 def init_param(model, src, group):
     for param in model.parameters():
-        #print(param)
+        # print(param)
         sys.stdout.flush()
         dist.broadcast(param.data, src=src, group=group)
-        #print('done')
+        # print('done')
         sys.stdout.flush()
-    
+
+
 def save_model(model, round, rank):
     print('===> Saving models...')
     state = {
         'state': model.state_dict(),
         'round': round,
-        }
+    }
     torch.save(state, 'autoencoder' + str(rank) + '.t7')
+
 
 def load_model(model, group, rank):
     print('===> Try resume from checkpoint')
@@ -81,48 +96,56 @@ def all_reduce(model, size, group):
         param.data /= size
     return model
 
+
 def exchange(model, size, rank):
     old_model = copy.deepcopy(model)
     for param in old_model.parameters():
-        dist.isend( param.data, dst=(rank+1)%size )
+        dist.isend(param.data, dst=(rank + 1) % size)
     for param in model.parameters():
-        dist.recv( param.data, src=(rank-1)%size )
+        dist.recv(param.data, src=(rank - 1) % size)
     return model
 
 
 def run(size, rank, epoch, batchsize):
-    #print('run')
-    if MODEL == 'CNN' and DATA_SET == 'Mnist':
-        model = CNNMnist()
+    # print('run')
+    if MODEL == 'CNN' and DATA_SET == 'KWS':
+        model = CNNKws()
     if MODEL == 'CNN' and DATA_SET == 'Cifar10':
         model = CNNCifar()
     if MODEL == 'ResNet18' and DATA_SET == 'Cifar10':
         model = ResNet18()
-    model.cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+
+    model = model.cuda()
+
+    optimizer = torch.optim.SGD(model.parameters(), lr=LR, weight_decay=1e-3)
     loss_func = torch.nn.CrossEntropyLoss()
 
     train_loader = get_local_data(size, rank, batchsize)
-    if rank == 0 :
+    if rank == 0:
         test_loader = get_testset(rank)
-        #fo = open("file_multi"+str(rank)+".txt", 'w')
+        # fo = open("file_multi"+str(rank)+".txt", 'w')
 
     group_list = [i for i in range(size)]
     group = dist.new_group(group_list)
 
     model, round = load_model(model, group, rank)
     while round < MAX_ROUND:
+        sys.stdout.flush()
         if rank == 0:
             accuracy = 0
+            positive_test_number = 0
+            total_test_number = 0
             for step, (test_x, test_y) in enumerate(test_loader):
                 test_x = test_x.cuda()
                 test_y = test_y.cuda()
                 test_output = model(test_x)
                 pred_y = torch.max(test_output, 1)[1].data.cpu().numpy()
-                accuracy += float((pred_y == test_y.data.cpu().numpy()).astype(int).sum()) / float(test_y.size(0))
-            accuracy /= 100
-            print('Round: ', round, 'Rank: ', rank, '| test accuracy: %.4f' % accuracy)
-            #fo.write(str(round) + "    " + str(rank) + "    " + str(accuracy) + "\n")
+                positive_test_number += (pred_y == test_y.data.cpu().numpy()).astype(int).sum()
+                # print(positive_test_number)
+                total_test_number += float(test_y.size(0))
+            accuracy = positive_test_number / total_test_number
+            print('Round: ', round, ' Rank: ', rank, '| test accuracy: %.4f' % accuracy)
+            # fo.write(str(round) + "    " + str(rank) + "    " + str(accuracy) + "\n")
 
         for epoch_cnt in range(epoch):
             for step, (b_x, b_y) in enumerate(train_loader):
@@ -131,17 +154,18 @@ def run(size, rank, epoch, batchsize):
                 optimizer.zero_grad()
                 output = model(b_x)
                 loss = loss_func(output, b_y)
-                loss.backward()   
+                loss.backward()
                 optimizer.step()
 
         model = all_reduce(model, size, group)
-        #if (round+1) % ROUND_NUMBER_FOR_REDUCE == 0:
-            #model = all_reduce(model, size, group)
+        # if (round+1) % ROUND_NUMBER_FOR_REDUCE == 0:
+        # model = all_reduce(model, size, group)
 
-        if (round+1) % ROUND_NUMBER_FOR_SAVE == 0:
-            save_model(model, round+1, rank)
+        if (round + 1) % ROUND_NUMBER_FOR_SAVE == 0:
+            save_model(model, round + 1, rank)
         round += 1
-    #fo.close()
+    # fo.close()
+
 
 def init_processes(size, rank, epoch, batchsize, run):
     dist.init_process_group(backend='nccl', init_method='tcp://127.0.0.1:22222', world_size=size, rank=rank)
@@ -154,7 +178,7 @@ if __name__ == "__main__":
     parser.add_argument('--epoch', '-e', type=int, default=1)
     parser.add_argument('--batchsize', '-b', type=int, default=100)
     args = parser.parse_args()
-    
+
     size = args.size
     epoch = args.epoch
     batchsize = args.batchsize
@@ -166,3 +190,4 @@ if __name__ == "__main__":
         processes.append(p)
     for p in processes:
         p.join()
+
