@@ -194,19 +194,30 @@ def init_processes(size, rank, epoch, batchsize, run):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--size', '-s', type=int, default=5)
-    parser.add_argument('--epoch', '-e', type=int, default=1)
-    parser.add_argument('--batchsize', '-b', type=int, default=128)
+    parser.add_argument('--master_address', '-m', type=str, default='127.0.0.1')
+    parser.add_argument('--world_size', '-w', type=int, default=5)
+    parser.add_argument('--rank', '-r', type=int, default=0)
+    parser.add_argument('--epoch_per_round', '-e', type=int, default=1)
+    parser.add_argument('--batch_size', '-b', type=int, default=128)
     args = parser.parse_args()
 
-    size = args.size
-    epoch = args.epoch
-    batchsize = args.batchsize
-
+    master_address = args.master_address
+    world_size = args.world_size
+    rank = args.rank
+    epoch_per_round = args.epoch_per_round
+    batch_size = args.batch_size
+    batch_size = 30000
+    batch_size = 128
     processes = []
-    for rank in range(0, size):
-        p = Process(target=init_processes, args=(size, rank, epoch, batchsize, run))
+    for rank in range(0, world_size):
+        p = Process(target=init_processes, args=(world_size, rank, epoch_per_round, batch_size, run))
         p.start()
         processes.append(p)
     for p in processes:
         p.join()
+    logging('Initialization:\n\t master_address: ' + str(master_address) + '; world_size: ' + str(
+        world_size) + ';\n\t rank: ' + str(rank) + '; epoch: ' + str(epoch_per_round) + '; batch size: ' + str(
+        batch_size))
+    init_processes(master_address, world_size, rank, epoch_per_round, batch_size, run)
+
+
