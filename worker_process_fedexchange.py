@@ -218,6 +218,6 @@ if __name__ == "__main__":
     logging('Initialization:\n\t master_address: ' + str(master_address) + '; world_size: ' + str(
         world_size) + ';\n\t rank: ' + str(rank) + '; epoch: ' + str(epoch_per_round) + '; batch size: ' + str(
         batch_size))
-    init_processes(master_address, world_size, rank, epoch_per_round, batch_size, run)
+    init_processes(world_size, rank, epoch_per_round, batch_size, run)
 
 

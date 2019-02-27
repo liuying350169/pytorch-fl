@@ -187,9 +187,11 @@ def run(world_size, rank, group, epoch_per_round, batch_size):
         logging(' Finish round: '+str(round)+'\n')
         round += 1
 
-def init_processes(size, rank, epoch, batchsize, run):
-    dist.init_process_group(backend='nccl', init_method='tcp://127.0.0.1:22444', world_size=size, rank=rank)
-    run(size, rank, epoch, batchsize)
+def init_processes(master_address, world_size, rank, epoch_per_round, batch_size, run):
+    # change 'tcp' to 'nccl' if running on GPU worker
+    dist.init_process_group(backend='tcp', init_method=master_address, world_size=world_size, rank=rank)
+    group = dist.new_group([i for i in range(world_size)])
+    run(world_size, rank, group, epoch_per_round, batch_size)
 
 
 if __name__ == "__main__":
